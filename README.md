@@ -62,6 +62,14 @@ PROM_PORT=8000 METRICS_TTL_SECONDS=3600 python async_parser_my.py
 ```
 LOG_PROGRESS_EVERY=50 python async_parser_my.py
 ```
+Логи по каждой книге можно отключить:
+```
+LOG_EACH_BOOK=0 python async_parser_my.py
+```
+Для асинхронного парсера можно настроить параллелизм:
+```
+MAX_CONCURRENCY=20 python async_parser_my.py
+```
 
 ## Версии для сборки и запуска
 - Полный список закреплённых версий находится в `requirements.txt`

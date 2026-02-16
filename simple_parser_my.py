@@ -136,6 +136,7 @@ def scrape_books(base_url, logger):
     results = []
     errors_count = 0
     progress_step = int(os.getenv("LOG_PROGRESS_EVERY", "50"))
+    log_each_book = os.getenv("LOG_EACH_BOOK", "1") != "0"
     for idx, book_url in enumerate(book_urls, start=1):
         try:
             book_text = fetch_text(session, book_url)
@@ -162,6 +163,8 @@ def scrape_books(base_url, logger):
                 "num_reviews": info.get("Number of reviews"),
             })
             books_parsed_total.inc()
+            if log_each_book:
+                logger.info("Обработана книга: %s", title)
         except Exception as e:
             logger.info("Ошибка %s: %s", book_url, e)
             books_errors_total.inc()

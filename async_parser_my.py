@@ -145,7 +145,8 @@ async def gather_data(base_url, logger):
 
         # 5) Парсим книги (ограничим одновременные запросы)
         t_books = time.time()
-        sem = asyncio.Semaphore(10)
+        max_concurrency = int(os.getenv("MAX_CONCURRENCY", "10"))
+        sem = asyncio.Semaphore(max_concurrency)
 
         async def bounded_get(book_url):
             async with sem:
@@ -155,6 +156,7 @@ async def gather_data(base_url, logger):
         errors_count = 0
         processed_count = 0
         progress_step = int(os.getenv("LOG_PROGRESS_EVERY", "50"))
+        log_each_book = os.getenv("LOG_EACH_BOOK", "1") != "0"
         for task in asyncio.as_completed(book_tasks):
             try:
                 item = await task
@@ -164,7 +166,8 @@ async def gather_data(base_url, logger):
                 errors_count += 1
             else:
                 books_data.append(item)
-                logger.info("Обработана книга: %s", item["title"])
+                if log_each_book:
+                    logger.info("Обработана книга: %s", item["title"])
                 books_parsed_total.inc()
             processed_count += 1
             if progress_step > 0 and processed_count % progress_step == 0:
