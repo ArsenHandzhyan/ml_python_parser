@@ -2,3 +2,6 @@
 /.claude/
 /data/
 /project.html
+/Logs/
+/Metrics/
+.DS_Store

@@ -49,10 +49,42 @@ python simple_parser_my.py
 ```
 http://localhost:8000/metrics
 ```
+По умолчанию метрики доступны 1 час после запуска. Можно изменить:
+```
+PROM_PORT=8000 METRICS_TTL_SECONDS=3600 python async_parser_my.py
+```
+Для простого парсера используется тот же порт и те же переменные окружения.
+Логи сохраняются в папку `Logs` в корне проекта. При каждом запуске создается
+отдельный файл с датой/временем и номером запуска.
+Снимок метрик сохраняется в папку `Metrics` в корне проекта (формат Prometheus
+`.prom`) после завершения парсинга.
+Периодичность прогресс-логов можно настроить:
+```
+LOG_PROGRESS_EVERY=50 python async_parser_my.py
+```
 
 ## Версии для сборки и запуска
 - Полный список закреплённых версий находится в `requirements.txt`
-- В `requirements.txt` зафиксирован `urllib3==1.26.20`, чтобы избежать предупреждения про LibreSSL
+
+## Быстрый запуск Prometheus + Grafana
+```bash
+docker run -d --name prometheus -p 9090:9090 \
+  -v "$(pwd)/prometheus.yml:/etc/prometheus/prometheus.yml" \
+  prom/prometheus
+
+docker run -d --name grafana -p 3000:3000 \
+  -e GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s \
+  grafana/grafana
+```
+Проверка:
+- Prometheus targets: `http://localhost:9090/targets`
+- Grafana: `http://localhost:3000` (логин `admin` / `admin`)
+
+Остановка и удаление контейнеров:
+```bash
+docker stop prometheus grafana
+docker rm prometheus grafana
+```
 
 ## Prometheus (локально)
 Создай файл `prometheus.yml` (он уже есть в проекте), затем запусти Prometheus:
@@ -65,15 +97,20 @@ docker run -p 9090:9090 \
 ```
 http://localhost:9090/targets
 ```
+Примечание: Prometheus запущен в Docker и обращается к метрикам на хосте через
+`host.docker.internal:8000` (это уже прописано в `prometheus.yml`).
 
 ## Grafana (локально)
 ```bash
-docker run -p 3000:3000 grafana/grafana
+docker run -p 3000:3000 \
+  -e GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s \
+  grafana/grafana
 ```
 Логин: `admin` / `admin`.
 
 Добавь источник данных Prometheus:
-- URL: `http://host.docker.internal:9090`
+- Если Grafana в Docker: `http://host.docker.internal:9090`
+- Если Grafana локально: `http://localhost:9090`
 
 Импортируй дашборд:
 - `grafana_dashboard.json`

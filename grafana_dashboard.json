@@ -9,7 +9,7 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "5s",
+  "refresh": "1s",
   "panels": [
     {
       "type": "stat",
@@ -23,7 +23,8 @@
       "targets": [
         {
           "expr": "scrape_duration_seconds{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -39,7 +40,8 @@
       "targets": [
         {
           "expr": "categories_count{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -55,7 +57,8 @@
       "targets": [
         {
           "expr": "books_found_total{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -71,7 +74,8 @@
       "targets": [
         {
           "expr": "books_parsed_total{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -87,7 +91,8 @@
       "targets": [
         {
           "expr": "books_errors_total{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -103,7 +108,8 @@
       "targets": [
         {
           "expr": "http_requests_total{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -135,7 +141,8 @@
       "targets": [
         {
           "expr": "category_books_count{job=\"books_async\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     }

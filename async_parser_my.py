@@ -5,9 +5,10 @@ from datetime import datetime
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
+from prometheus_client import Counter, Gauge, Histogram, start_http_server, generate_latest
 import os
 from urllib.parse import urljoin
+import logging
 
 # Глобальное хранилище результатов
 books_data = []
@@ -40,7 +41,7 @@ async def fetch_text(session, url, headers):
         raise
 
 # --- Блок: получить ссылки книг из одной категории ---
-async def get_category_book_links(session, name, url, base_url, headers):
+async def get_category_book_links(session, name, url, base_url, headers, logger):
     book_urls = []
     page_url = url
     base_catalogue = base_url + "catalogue/"
@@ -57,7 +58,7 @@ async def get_category_book_links(session, name, url, base_url, headers):
             break
         page_url = urljoin(page_url, next_link.get("href"))
 
-    print(f"Категория '{name}': {len(book_urls)} книг")
+    logger.info("Категория '%s': %d книг", name, len(book_urls))
     category_books_count.labels(category=name).set(len(book_urls))
     return book_urls
 
@@ -103,7 +104,7 @@ async def get_page_data(session, page, base_url):
     # Здесь можно добавить логику для обработки данных страницы
 
 # --- Главная асинхронная функция ---
-async def gather_data(base_url):
+async def gather_data(base_url, logger):
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
     }
@@ -126,11 +127,11 @@ async def gather_data(base_url):
         # 3) Получаем ссылки на книги из всех категорий
         t_cat = time.time()
         category_tasks = [
-            get_category_book_links(session, name, url, base_url, headers)
+            get_category_book_links(session, name, url, base_url, headers, logger)
             for name, url in categories
         ]
         category_results = await asyncio.gather(*category_tasks)
-        print(f"Категории обработаны за {time.time() - t_cat:.2f} сек")
+        logger.info("Категории обработаны за %.2f сек", time.time() - t_cat)
 
         # 4) Убираем дубли ссылок на книги
         seen = set()
@@ -150,19 +151,36 @@ async def gather_data(base_url):
             async with sem:
                 return await get_book_data(session, book_url, headers)
 
-        book_tasks = [bounded_get(u) for u in book_urls]
-        results = await asyncio.gather(*book_tasks, return_exceptions=True)
-
-        for item in results:
-            if isinstance(item, Exception):
-                print(f"Ошибка при обработке книги: {item}")
+        book_tasks = [asyncio.create_task(bounded_get(u)) for u in book_urls]
+        errors_count = 0
+        processed_count = 0
+        progress_step = int(os.getenv("LOG_PROGRESS_EVERY", "50"))
+        for task in asyncio.as_completed(book_tasks):
+            try:
+                item = await task
+            except Exception as e:
+                logger.info("Ошибка при обработке книги: %s", e)
                 books_errors_total.inc()
+                errors_count += 1
             else:
                 books_data.append(item)
-                print(f"[INFO] Обработана книга: {item['title']}")
+                logger.info("Обработана книга: %s", item["title"])
                 books_parsed_total.inc()
+            processed_count += 1
+            if progress_step > 0 and processed_count % progress_step == 0:
+                logger.info(
+                    "Прогресс: %d/%d книг обработано",
+                    processed_count,
+                    len(book_urls),
+                )
 
-        print(f"Книги обработаны за {time.time() - t_books:.2f} сек")
+        logger.info("Книги обработаны за %.2f сек", time.time() - t_books)
+        return {
+            "categories": len(categories),
+            "books_found": len(book_urls),
+            "books_parsed": len(books_data),
+            "books_errors": errors_count,
+        }
 
 # --- Точка входа ---
 def main():
@@ -170,11 +188,13 @@ def main():
     base_url = "https://books.toscrape.com/"
     output_dir = os.path.join("data", "async")
     os.makedirs(output_dir, exist_ok=True)
+    logger, log_path, run_number = init_logging("async_parser")
+    logger.info("Старт. Лог: %s, запуск #%d", log_path, run_number)
     # Запускаем /metrics на localhost с настраиваемым портом
     metrics_port = int(os.getenv("PROM_PORT", "8000"))
     metrics_ttl = int(os.getenv("METRICS_TTL_SECONDS", "3600"))
     start_http_server(metrics_port)
-    asyncio.run(gather_data(base_url))
+    stats = asyncio.run(gather_data(base_url, logger))
 
     # Сохраняем JSON
     cur_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -217,11 +237,66 @@ def main():
     # Лог времени
     finish_time = time.time() - start_time
     scrape_duration.set(finish_time)
-    print(f"Дата и время окончания: {cur_time}")
-    print(f"Время выполнения скрипта: {finish_time} секунд")
+    logger.info("Дата и время окончания: %s", cur_time)
+    logger.info("Время выполнения скрипта: %.2f секунд", finish_time)
+    if stats:
+        logger.info(
+            "Готово: категории=%d, найдено=%d, распарсено=%d, ошибок=%d, время=%.2f сек",
+            stats["categories"],
+            stats["books_found"],
+            stats["books_parsed"],
+            stats["books_errors"],
+            finish_time,
+        )
+    metrics_path = write_metrics_snapshot("async_parser", run_number)
+    logger.info("Снимок метрик сохранен: %s", metrics_path)
     if metrics_ttl > 0:
-        print(f"Метрики будут доступны еще {metrics_ttl} секунд")
+        logger.info("Метрики будут доступны еще %d секунд", metrics_ttl)
         time.sleep(metrics_ttl)
+
+
+def init_logging(run_label):
+    logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
+    os.makedirs(logs_dir, exist_ok=True)
+
+    counter_path = os.path.join(logs_dir, f"{run_label}.run_counter")
+    try:
+        with open(counter_path, "r", encoding="utf-8") as f:
+            run_number = int(f.read().strip())
+    except Exception:
+        run_number = 0
+    run_number += 1
+    with open(counter_path, "w", encoding="utf-8") as f:
+        f.write(str(run_number))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"{run_label}_{timestamp}_run{run_number}.log"
+    log_path = os.path.join(logs_dir, log_filename)
+
+    logger = logging.getLogger(run_label)
+    logger.setLevel(logging.INFO)
+    logger.handlers = []
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger, log_path, run_number
+
+
+def write_metrics_snapshot(run_label, run_number):
+    metrics_dir = os.path.join(os.path.dirname(__file__), "Metrics")
+    os.makedirs(metrics_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    metrics_filename = f"{run_label}_{timestamp}_run{run_number}.prom"
+    metrics_path = os.path.join(metrics_dir, metrics_filename)
+    with open(metrics_path, "wb") as f:
+        f.write(generate_latest())
+    return metrics_path
 
 
 if __name__ == "__main__":
