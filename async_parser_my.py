@@ -7,6 +7,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 import os
+from urllib.parse import urljoin
 
 # Глобальное хранилище результатов
 books_data = []
@@ -40,20 +41,24 @@ async def fetch_text(session, url, headers):
 
 # --- Блок: получить ссылки книг из одной категории ---
 async def get_category_book_links(session, name, url, base_url, headers):
-    # Скачиваем HTML категории
-    text = await fetch_text(session, url, headers)
-    soup = BeautifulSoup(text, "html.parser")
-    # Собираем относительные ссылки на книги
-    links = [a["href"] for a in soup.select("article.product_pod h3 a")]
-    # Лог количества книг в категории
-    print(f"Категория '{name}': {len(links)} книг")
-    category_books_count.labels(category=name).set(len(links))
-
-    # Приводим ссылки к абсолютным
-    base_catalogue = base_url + "catalogue/"
     book_urls = []
-    for rel in links:
-        book_urls.append(base_catalogue + rel.replace("../../../", ""))
+    page_url = url
+    base_catalogue = base_url + "catalogue/"
+
+    while True:
+        text = await fetch_text(session, page_url, headers)
+        soup = BeautifulSoup(text, "html.parser")
+        links = [a["href"] for a in soup.select("article.product_pod h3 a")]
+        for rel in links:
+            book_urls.append(base_catalogue + rel.replace("../../../", ""))
+
+        next_link = soup.select_one("li.next a")
+        if not next_link:
+            break
+        page_url = urljoin(page_url, next_link.get("href"))
+
+    print(f"Категория '{name}': {len(book_urls)} книг")
+    category_books_count.labels(category=name).set(len(book_urls))
     return book_urls
 
 # --- Блок: получить данные одной книги ---
@@ -166,7 +171,8 @@ def main():
     output_dir = os.path.join("data", "async")
     os.makedirs(output_dir, exist_ok=True)
     # Запускаем /metrics на localhost с настраиваемым портом
-    metrics_port = int(os.getenv("PROM_PORT", "8001"))
+    metrics_port = int(os.getenv("PROM_PORT", "8000"))
+    metrics_ttl = int(os.getenv("METRICS_TTL_SECONDS", "3600"))
     start_http_server(metrics_port)
     asyncio.run(gather_data(base_url))
 
@@ -213,7 +219,9 @@ def main():
     scrape_duration.set(finish_time)
     print(f"Дата и время окончания: {cur_time}")
     print(f"Время выполнения скрипта: {finish_time} секунд")
-    # Держим процесс живым, чтобы Prometheus видел /metrics
+    if metrics_ttl > 0:
+        print(f"Метрики будут доступны еще {metrics_ttl} секунд")
+        time.sleep(metrics_ttl)
 
 
 if __name__ == "__main__":

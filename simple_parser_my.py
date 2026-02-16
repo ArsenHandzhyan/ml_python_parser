@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 def scrape_books(base_url):
     t0 = time.time()
@@ -34,11 +35,19 @@ def scrape_books(base_url):
     t_cat = time.time()
     book_rel_links = []
     for name, url in categories:
-        r = session.get(url)
-        s = BeautifulSoup(r.text, "html.parser")
-        links = [a["href"] for a in s.select("article.product_pod h3 a")]
-        book_rel_links.extend(links)
-        print(f"Категория '{name}': {len(links)} книг")
+        page_url = url
+        category_links = []
+        while True:
+            r = session.get(page_url)
+            s = BeautifulSoup(r.text, "html.parser")
+            links = [a["href"] for a in s.select("article.product_pod h3 a")]
+            category_links.extend(links)
+            next_link = s.select_one("li.next a")
+            if not next_link:
+                break
+            page_url = urljoin(page_url, next_link.get("href"))
+        book_rel_links.extend(category_links)
+        print(f"Категория '{name}': {len(category_links)} книг")
     print(f"Категории обработаны за {time.time() - t_cat:.2f} сек")
 
     # 4) Приводим ссылки к абсолютным и убираем дубли
